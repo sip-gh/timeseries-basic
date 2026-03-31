@@ -1,6 +1,7 @@
 # ---
 # jupyter:
 #   jupytext:
+#     formats: ipynb,py:percent
 #     text_representation:
 #       extension: .py
 #       format_name: percent
@@ -298,5 +299,3 @@ print(f"MSE : {mse:.4f}")
 print(f"RMSE: {rmse:.4f}")
 print(f"MAE : {mae:.4f}")
 
-
-# %%
