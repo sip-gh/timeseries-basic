@@ -13,3 +13,10 @@ dependencies = [
     "scikit-learn>=1.8.0",
     "statsmodels>=0.14.6",
 ]
+
+[dependency-groups]
+dev = ["jupytext>=1.19.1"]
+
+[tool.jupytext]
+# ノートとスクリプトのペア形式
+formats = "ipynb,py:percent"
