@@ -13,23 +13,24 @@
 # ---
 
 # %% [markdown]
-# ### p_03_ec_sales_arima: EC日次売上の時系列予測（ARIMA）
+# ##### p_03_ec_sales_arima: EC日次売上の時系列予測（ARIMA → SARIMA）
 #
-# #### 目的
+# ###### 目的
 # - 擬似的なEC小売の日次売上データを使い、ARIMA モデルによる7日先予測を実装する
 # - p_02（サイン波シミュレーション）で習得した定常性検定→次数選択→残差診断のフローを、
 #   より実務に近い「ビジネス系時系列」に移植する
 # - 後で Kaggle などの実データに差し替えて再利用できるテンプレとして仕上げる
 #
-# #### データ概要
+# ###### データ概要
 # - 期間：2022-01-01 〜 2023-12-31（730日分）
 # - 構造：ベーストレンド＋週次季節性（週末+30）＋年間季節性（12月+40）＋正規ノイズ（σ=10）
 #
-# #### 結論（先に読む用）
+# ###### 結論（先に読む用）
 # - ADF 検定：元系列は非定常 → 1階差分で定常化（d=1）
 # - ACF/PACF から候補を絞り、AIC/BIC 比較で ARIMA(1,1,2) を採用
 # - 7日先予測区間幅は約 70〜85（残差 σ≈18 の水準として妥当）
-# - 残差 ACF にラグ7周期のスパイクあり → SARIMA(m=7) が次のステップ
+# - 残差 ACF にラグ7周期のスパイクあり → 週次季節性が残っていることを確認
+# - SARIMA(1,1,2)(1,0,1,7) に拡張すると、ラグ7周期のスパイクが消え、AIC/BIC も大きく改善
 
 # %%
 import numpy as np
@@ -441,3 +442,48 @@ for n in steps_list:
     actual_width = ci_df.loc[ci_df["steps先"] == n, "区間幅"].values[0]
     print(f"  {n:2d}日先：理論値 {theory_width:.1f}  実際 {actual_width:.1f}")
 
+
+# %%
+# SARIMA は ARIMA に「季節成分」を追加したモデル
+# order=(p,d,q) が通常成分、seasonal_order=(P,D,Q,m) が季節成分
+# m=7 は「7日周期（週次）」を指定している
+from statsmodels.tsa.statespace.sarimax import SARIMAX
+
+sarima_model = SARIMAX(
+    df["sales"],
+    order=(1, 1, 2),          # 通常の ARIMA 部分（p,d,q）
+    seasonal_order=(1, 0, 1, 7),  # 季節成分（P,D,Q,m）
+    # P=1：季節 AR 1次（7日前の値が効く）
+    # D=0：季節差分なし（元系列の季節成分は穏やか）
+    # Q=1：季節 MA 1次
+    # m=7：季節周期 = 7日
+)
+sarima_result = sarima_model.fit(disp=False)  # disp=False で最適化ログを非表示
+
+print(sarima_result.summary())
+
+
+# %%
+resid_sarima = sarima_result.resid
+
+fig, axes = plt.subplots(1, 2, figsize=(14, 4))
+
+# ARIMA(1,1,2) の残差 ACF（左）
+plot_acf(resid.dropna(), lags=40, ax=axes[0])
+axes[0].set_title("残差 ACF：ARIMA(1,1,2)")
+
+# SARIMA(1,1,2)(1,0,1,7) の残差 ACF（右）
+plot_acf(resid_sarima.dropna(), lags=40, ax=axes[1])
+axes[1].set_title("残差 ACF：SARIMA(1,1,2)(1,0,1,7)")
+
+plt.tight_layout()
+plt.show()
+
+
+# %%
+print("モデル比較:")
+print(f"  ARIMA(1,1,2)          AIC={best_result.aic:.2f}  BIC={best_result.bic:.2f}")
+print(f"  SARIMA(1,1,2)(1,0,1,7) AIC={sarima_result.aic:.2f}  BIC={sarima_result.bic:.2f}")
+
+
+# %%
