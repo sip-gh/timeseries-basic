@@ -51,6 +51,7 @@ dist/
 
 # Notebook本体はGitに載せず、対応する .py を管理する
 *.ipynb
+notebooks_local/
 
 
 ########################################
