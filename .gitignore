@@ -2,6 +2,8 @@
 # secrets / local configs
 ########################################
 
+.envrc          # direnv 設定ファイル（ローカル専用にする）
+.direnv/        # direnv が作るキャッシュディレクトリ
 .secrets/
 src/.secrets/.env
 config.*

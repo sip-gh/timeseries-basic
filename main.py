@@ -1,23 +1,44 @@
 from pathlib import Path
 
+p = Path(".")
+print(p)               # .
+print(p.resolve())     # /Users/xxx/devs/timeseries-basic みたいな絶対パス
 
-def main() -> None:
-    """Entry point for the time series basics project."""
-    project_root = Path(__file__).resolve().parent
-
-    print("=== Time Series Basics with Python ===")
-    print(f"Project root : {project_root}")
-    print()
-    print("Available example scripts (see ./scripts):")
-    print("  - p_01_simple_ma.py      : Simple moving average")
-    print("  - p_02_stationarity.py   : Stationarity check")
-    print("  - p_03_ec_sales_arima.py : ARIMA on EC sales data")
-    print()
-    print("Tip:")
-    print("  uv run python scripts/p_01_simple_ma.py")
-    print("  uv run python scripts/p_02_stationarity.py")
-    print("  uv run python scripts/p_03_ec_sales_arima.py")
+# import argparse  # コマンドライン引数を扱う標準ライブラリ
+# from pathlib import Path
+# import subprocess  # 別のPythonスクリプトを別プロセスとして実行する標準ライブラリ
 
 
-if __name__ == "__main__":
-    main()
+# # ランチャーが対応するスクリプト一覧（キー: CLIで指定する名前）
+# SCRIPT_MAP = {
+#     "p01": "p_01_simple_ma.py",
+#     "p02": "p_02_stationarity.py",
+#     "p03": "p_03_ec_sales_arima.py",
+# }
+
+# def main() -> None:
+#     project_root = Path(__file__)
+#     breakpoint()
+#     # .resolve()
+
+#     # 1. 「どういう引数を受け取るか」を定義する
+#     parser = argparse.ArgumentParser(
+#         description="Minimal argparse example.",
+#     )
+#     parser.add_argument(
+#         "target",
+#         nargs="?",  # 省略可能
+#         choices=["p01", "p02", "p03", "list"],  # 許可する値を限定
+#         help="Which example to run (p01, p02, p03) or 'list' to show options.",
+#     )
+
+#     # 2. 実際のコマンドラインから引数を読み取る
+#     args = parser.parse_args()
+
+#     # 3. パースされた結果を確認
+#     print(f"args      : {args!r}")
+#     print(f"args.target : {args.target!r}")
+
+
+# if __name__ == "__main__":
+#     main()
