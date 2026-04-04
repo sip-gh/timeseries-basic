@@ -1,0 +1,73 @@
+{
+    // Pythonファイル用の設定
+    "[python]": {
+        // 保存時に Ruff の自動修正（lint修正）を実行
+        "editor.codeActionsOnSave": {
+            "source.fixAll.ruff": "explicit",
+            "source.organizeImports.ruff": "explicit"
+        },
+        // // フォーマッタとして Ruff を使う
+        // "editor.defaultFormatter": "charliermarsh.ruff",
+        // mvp開発用に一時的にruff解除
+        "editor.defaultFormatter": "ms-python.python",
+        // 保存時に自動整形
+        "editor.formatOnSave": true
+    },
+    // Jupyter(.pyとして開いた場合)は自動整形しない
+    "[jupyter]": {
+        "editor.formatOnSave": false,
+        "editor.codeActionsOnSave": {}
+    },
+    // .ipynb は Jupyter拡張のフォーマッタを使う・自動整形しない
+    "[ipynb]": {
+        "editor.formatOnSave": false,
+        "editor.codeActionsOnSave": {},
+        "editor.defaultFormatter": "ms-toolsai.jupyter"
+    },
+    // Blackの追加オプション（使う場面があれば有効）
+    "black-formatter.args": [
+        "--skip-magic-trailing-comma"
+    ],
+    // TOMLファイルは自動整形しない
+    "[toml]": {
+        "editor.formatOnSave": false
+    },
+    // ★ Pylance に ./src をモジュール探索パスとして教える
+    "python.analysis.extraPaths": [
+        "./src"
+    ],
+    // 型チェックはオフ（型エラーで赤線だらけにならないように）
+    "python.analysis.typeCheckingMode": "off",
+    // 自動 import 候補を出す
+    "python.analysis.autoImportCompletions": true,
+    // Jupyterの自動起動は有効のまま
+    "jupyter.disableJupyterAutoStart": false,
+    // 一部の解析エラー（モジュール見つからない等）の重大度を下げる
+    "python.analysis.diagnosticSeverityOverrides": {
+        "reportMissingImports": "none",
+        "reportMissingModuleSource": "none",
+        "reportGeneralTypeIssues": "none"
+    },
+    // .ipynb は解析対象から除外
+    "python.analysis.ignore": [
+        "**/*.ipynb"
+    ],
+    // 言語サーバーとして Pylance を使用
+    "python.languageServer": "Pylance",
+    // Jupyterのインタラクティブウィンドウ設定（選択実行時に新セルを増やさない）
+    "jupyter.interactiveWindow.textEditor.executeSelection.addNewCell": false,
+    // Jupytext関連：全ワークスペースで使う
+    "jupyter.jupytext.useVscodeWindowAllWorkspaces": true,
+    // 自動保存を有効、1秒後に保存
+    "files.autoSave": "afterDelay",
+    "files.autoSaveDelay": 1000,
+    // Notebook のルートパスをワークスペースルートに
+    "jupyter.notebookFileRoot": "${workspaceFolder}",
+    // Jupytextペアファイル（.pyなど）の自動検出
+    "jupyter.jupytext.detectPairedEntries": true,
+    // uv の仮想環境の Python を明示的に使う
+    "python.defaultInterpreterPath": "${workspaceFolder}/.venv/bin/python",
+    "jupyter.pythonPath": "${workspaceFolder}/.venv/bin/python",
+    // ターミナル起動時に自動で仮想環境をアクティブにしない
+    "python.terminal.activateEnvironment": false
+}
