@@ -1,9 +1,3 @@
-from pathlib import Path
-
-p = Path(".")
-print(p)               # .
-print(p.resolve())     # /Users/xxx/devs/timeseries-basic みたいな絶対パス
-
 # import argparse  # コマンドライン引数を扱う標準ライブラリ
 # from pathlib import Path
 # import subprocess  # 別のPythonスクリプトを別プロセスとして実行する標準ライブラリ
