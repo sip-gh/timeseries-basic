@@ -13,14 +13,29 @@
 # ---
 
 # %%
+import sys
+from pathlib import Path
+
+from typing import Iterable, Tuple
 import numpy as np
 import pandas as pd
-from sklearn.model_selection import TimeSeriesSplit
 from sklearn.linear_model import LinearRegression
 from sklearn.metrics import mean_squared_error
 import lightgbm as lgb
-from lightgbm import LGBMRegressor
 
+# notebooks_local/ から 1つ上（プロジェクトルート）を取得
+PROJECT_ROOT = Path.cwd().parent
+
+# Python がモジュールを探すパスにプロジェクトルートを追加
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+
+from src.time_series_cv import make_yearly_expanding_splits
+
+
+
+# %%
 # データ読み込み
 train_path = "../data/store-sales-time-series-forecasting/train.csv"
 df = pd.read_csv(train_path, parse_dates=["date"])
@@ -70,6 +85,7 @@ df_feat = df[base_cols].copy()
 df_feat.head()
 
 
+
 # %%
 target_col = "sales"
 
@@ -108,6 +124,7 @@ df_feat = df_feat.dropna().reset_index(drop=True)
 df_feat.head()
 
 
+
 # %%
 # 学習に使う特徴量（あとで増減しやすいようにリストにまとめる）
 feature_cols = [
@@ -124,17 +141,24 @@ y = df_feat["sales"].values
 dates = df_feat["date"].values  # 分割確認用に日付も持っておく
 
 
+
 # %%
 # 年ベースのCV split（最後の3年をテストに使う）
-years = np.sort(df_feat["year"].unique())
-cv_years = years[-3:]  # 例: [2015, 2016, 2017]
+splits = make_yearly_expanding_splits(df_feat["year"], n_folds=3)
 
-splits = []
-for test_year in cv_years:
-    train_mask = df_feat["year"] < test_year   # 過去すべてをtrain
-    test_mask  = df_feat["year"] == test_year  # その年だけtest
-    splits.append((train_mask, test_mask))
 
+
+# %%
+for i, (train_mask, test_mask) in enumerate(splits, start=1):
+    print(f"Fold {i}")
+    print("  train rows:", train_mask.sum())
+    print("  test rows :", test_mask.sum())
+    print("  train years:", sorted(df_feat.loc[train_mask, 'year'].unique()))
+    print("  test years :", sorted(df_feat.loc[test_mask, 'year'].unique()))
+
+
+# %% [markdown]
+# ### LinearRegression
 
 # %%
 model = LinearRegression()
@@ -162,7 +186,54 @@ for i, (train_mask, test_mask) in enumerate(splits, start=1):
     print(f"Fold {i} RMSE: {rmse:.4f}")
 
 
+
+# %% [markdown]
+# ### LGBMRegressor
+
 # %%
+def run_lgbm_cv(
+    params: dict,
+    splits: Iterable[Tuple[np.ndarray, np.ndarray]],
+    X: pd.DataFrame,
+    y: np.ndarray,
+) -> pd.DataFrame:
+    """
+    LightGBM用の時系列クロスバリデーションを1セット実行し、
+    各foldのRMSEをまとめたDataFrameを返す。
+
+    - splits: (train_mask, test_mask) の反復可能オブジェクト
+              各マスクは bool の1次元配列（len == len(X)）を想定。
+    - X: 特徴量DataFrame
+    - y: 目的変数（1次元の NumPy 配列）
+    """
+    results = []
+
+    for i, (train_mask, test_mask) in enumerate(splits, start=1):
+        # ブーリアンマスクで行を選択
+        X_train = X.loc[train_mask]
+        y_train = y[train_mask]
+        X_test  = X.loc[test_mask]
+        y_test  = y[test_mask]
+
+        # 毎foldごとに新しいモデルを作成
+        model = lgb.LGBMRegressor(**params)
+        model.fit(X_train, y_train)
+
+        # 予測とRMSE計算（明示的に MSE → sqrt で計算）
+        y_pred = model.predict(X_test)
+        mse = mean_squared_error(y_test, y_pred)
+        rmse = np.sqrt(mse)
+
+        print(f"Fold {i} RMSE: {rmse:.4f}")
+        results.append({"fold": i, "rmse": rmse})
+
+    # 各foldのRMSEをまとめたDataFrameを返す
+    return pd.DataFrame(results)
+
+
+
+# %%
+# v1: ベースラインとなるLightGBMパラメータでCV
 # とりあえずのパラメータ（十分シンプル）
 lgb_params = {
     "objective": "regression",
@@ -173,51 +244,12 @@ lgb_params = {
     "num_leaves": 31,
     "n_jobs": -1,
 }
+lgb_df = (
+    run_lgbm_cv(lgb_params, splits, X, y)
+    .rename(columns={"rmse": "rmse_lgbm"})
+)
 
-lgb_results = []
-
-for i, (train_mask, test_mask) in enumerate(splits, start=1):
-    # ★ここは train_idx / test_idx ではなく、train_mask / test_mask をそのまま使う
-    X_train = X.loc[train_mask]
-    y_train = y[train_mask]
-    X_test  = X.loc[test_mask]
-    y_test  = y[test_mask]
-
-    # モデル作成（毎foldで新しく作る）
-    model = lgb.LGBMRegressor(**lgb_params)
-
-    # 学習
-    model.fit(X_train, y_train)
-
-    # 予測
-    y_pred = model.predict(X_test)
-
-    # RMSE（外側で自分でも計算する）
-    mse = mean_squared_error(y_test, y_pred)
-    rmse = np.sqrt(mse)
-
-    lgb_results.append({"fold": i, "rmse": rmse})
-    print(f"Fold {i} RMSE: {rmse:.4f}")
-
-
-# %%
-# 線形回帰の結果をDataFrameに
-lr_df = pd.DataFrame(fold_results)        # columns: ["fold", "rmse"]
-lr_df = lr_df.rename(columns={"rmse": "rmse_linear"})
-
-# LightGBMの結果をDataFrameに
-lgb_df = pd.DataFrame(lgb_results)        # columns: ["fold", "rmse"]
-lgb_df = lgb_df.rename(columns={"rmse": "rmse_lgbm"})
-
-rmse_df = lr_df.merge(lgb_df, on="fold")
-
-rmse_df["rmse_diff"] = rmse_df["rmse_linear"] - rmse_df["rmse_lgbm"]
-
-rmse_df
-
-
-# %%
-# 2つ目のパラメータセット（樹木数だけ増やす例）
+# v2: n_estimators（木の本数）だけ増やしたバージョンでCV
 lgb_params_v2 = {
     "objective": "regression",
     "metric": "rmse",
@@ -227,74 +259,52 @@ lgb_params_v2 = {
     "num_leaves": 31,
     "n_jobs": -1,
 }
+lgb_df_v2 = (
+    run_lgbm_cv(lgb_params_v2, splits, X, y)
+    .rename(columns={"rmse": "rmse_lgbm_v2"})
+)
 
-lgb_results_v2 = []
-
-for i, (train_mask, test_mask) in enumerate(splits, start=1):
-    X_train = X.loc[train_mask]
-    y_train = y[train_mask]
-    X_test  = X.loc[test_mask]
-    y_test  = y[test_mask]
-
-    model = lgb.LGBMRegressor(**lgb_params_v2)
-    model.fit(X_train, y_train)
-    y_pred = model.predict(X_test)
-
-    mse = mean_squared_error(y_test, y_pred)
-    rmse = np.sqrt(mse)
-
-    lgb_results_v2.append({"fold": i, "rmse": rmse})
-    print(f"[v2] Fold {i} RMSE: {rmse:.4f}")
-
-
-# %%
-# v2 の結果をDataFrame化
-lgb_df_v2 = pd.DataFrame(lgb_results_v2).rename(columns={"rmse": "rmse_lgbm_v2"})
-
-# 既存の rmse_df にマージ
-rmse_df = rmse_df.merge(lgb_df_v2, on="fold")
-
-rmse_df
-
-
-# %%
-# num_leaves を増やしたバージョン
+# v3: num_leaves（葉の数）だけ増やしたバージョンでCV
 lgb_params_v3 = {
     "objective": "regression",
     "metric": "rmse",
     "random_state": 42,
-    "n_estimators": 200,   # 本数は良かった200のまま
+    "n_estimators": 200,   # 本数はベースラインと同じ
     "learning_rate": 0.1,
-    "num_leaves": 63,      # ここだけ 31 → 63
+    "num_leaves": 63,      # ← 31 → 63 に増やす
     "n_jobs": -1,
 }
+lgb_df_v3 = (
+    run_lgbm_cv(lgb_params_v3, splits, X, y)
+    .rename(columns={"rmse": "rmse_lgbm_v3"})
+)
 
-lgb_results_v3 = []
+# 線形回帰の結果をDataFrameに（列名を rmse_linear に統一）
+lr_df = pd.DataFrame(fold_results).rename(columns={"rmse": "rmse_linear"})
 
-for i, (train_mask, test_mask) in enumerate(splits, start=1):
-    X_train = X.loc[train_mask]
-    y_train = y[train_mask]
-    X_test  = X.loc[test_mask]
-    y_test  = y[test_mask]
+# 各モデルのRMSEをfold単位で横持ちに結合
+rmse_df = (
+    lr_df
+    .merge(lgb_df,    on="fold")
+    .merge(lgb_df_v2, on="fold")
+    .merge(lgb_df_v3, on="fold")
+)
 
-    model = lgb.LGBMRegressor(**lgb_params_v3)
-    model.fit(X_train, y_train)
+# 線形回帰との差分（どれだけLGBMが改善したか）を追加
+rmse_df["rmse_diff"] = rmse_df["rmse_linear"] - rmse_df["rmse_lgbm"]
 
-    y_pred = model.predict(X_test)
+rmse_df
 
-    mse = mean_squared_error(y_test, y_pred)
-    rmse = np.sqrt(mse)
-
-    lgb_results_v3.append({"fold": i, "rmse": rmse})
-    print(f"[v3] Fold {i} RMSE: {rmse:.4f}")
 
 
 # %%
-lgb_df_v3 = pd.DataFrame(lgb_results_v3).rename(columns={"rmse": "rmse_lgbm_v3"})
+rmse_df.describe()
 
-rmse_df = rmse_df.merge(lgb_df_v3, on="fold")
 
-rmse_df
+# %%
+rmse_path = "../data/lgbm_cv_rmse.csv"
+rmse_df.to_csv(rmse_path, index=False)
+rmse_path
 
 
 # %% [markdown]
