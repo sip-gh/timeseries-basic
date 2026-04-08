@@ -12,15 +12,8 @@ dependencies = [
     "matplotlib>=3.10.8",
     "scikit-learn>=1.8.0",
     "statsmodels>=0.14.6",
+    "lightgbm>=4.6.0",
 ]
 
 [dependency-groups]
-dev = [
-    "ipdb>=0.13.13",
-    "jupytext>=1.19.1",
-    "pytest>=9.0.2",
-]
-
-[tool.jupytext]
-# ノートとスクリプトのペア形式
-formats = "ipynb,py:percent"
+dev = ["ipdb>=0.13.13", "jupytext>=1.19.1", "pytest>=9.0.2"]
