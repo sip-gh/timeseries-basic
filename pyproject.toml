@@ -17,3 +17,7 @@ dependencies = [
 
 [dependency-groups]
 dev = ["ipdb>=0.13.13", "jupytext>=1.19.1", "pytest>=9.0.2"]
+
+[tool.jupytext]
+# notebooks_local/ の ipynb と scripts/ の py:percent をペアにする
+formats = "notebooks_local///ipynb,scripts///py:percent"
