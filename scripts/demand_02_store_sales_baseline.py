@@ -13,9 +13,25 @@
 # ---
 
 # %%
+import sys
+from pathlib import Path
+
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
+
+# Jupyter では __file__ が使えないことが多いので Path.cwd() を使う
+PROJECT_ROOT = Path.cwd().parent
+
+# Python が import 先を探す場所にプロジェクトルートを追加
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+from src.metrics import rmse, smape
+
+
+
+# %%
 
 # 代表系列の条件
 target_store = 1
@@ -50,20 +66,6 @@ df_rep_baseline[["date", "sales", "pred_naive_1d", "pred_ma_7d"]].head()
 
 
 # %%
-# RMSE: 二乗誤差の平均の平方根
-def rmse(y_true, y_pred):
-    return np.sqrt(np.mean((y_true - y_pred) ** 2))
-
-
-# SMAPE: 実測と予測の大きさの合計に対する「対称な」割合誤差
-# 分母が0近くになるのを防ぐために、非常に小さい値(1e-8)を足している
-def smape(y_true, y_pred):
-    denom = (np.abs(y_true) + np.abs(y_pred)) + 1e-8
-    return np.mean(2.0 * np.abs(y_pred - y_true) / denom)
-
-
-
-# %%
 y_true = df_rep_baseline["sales"].values
 
 rmse_naive = rmse(y_true, df_rep_baseline["pred_naive_1d"].values)
@@ -73,6 +75,7 @@ smape_naive = smape(y_true, df_rep_baseline["pred_naive_1d"].values)
 smape_ma7 = smape(y_true, df_rep_baseline["pred_ma_7d"].values)
 
 rmse_naive, rmse_ma7, smape_naive, smape_ma7
+
 
 
 # %%
@@ -85,6 +88,7 @@ results = pd.DataFrame(
 )
 
 results
+
 
 
 # %%
@@ -106,6 +110,7 @@ plt.legend()
 plt.grid(True)
 plt.tight_layout()
 plt.show()
+
 
 
 # %% [markdown]
