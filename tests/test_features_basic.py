@@ -4,6 +4,7 @@ import pandas as pd
 from src.features import (
     add_lag_ma_features,
     add_store_sales_group_lag_ma_features,
+    get_store_family_series,
 )
 
 
@@ -120,3 +121,75 @@ def test_add_store_sales_group_lag_ma_features_drop_na() -> None:
         pd.Timestamp("2020-01-04"),
         pd.Timestamp("2020-01-05"),
     ]
+
+
+def test_get_store_family_series_filters_and_sorts() -> None:
+    # 2店舗 × 2ファミリー × 3日分のデータ（わざと日付をシャッフル）
+    df = pd.DataFrame(
+        {
+            "date": pd.to_datetime(
+                [
+                    "2020-01-03", "2020-01-01", "2020-01-02",  # store 1, GROCERY I
+                    "2020-01-01", "2020-01-02", "2020-01-03",  # store 1, BEVERAGES
+                    "2020-01-01", "2020-01-02", "2020-01-03",  # store 2, GROCERY I
+                ]
+            ),
+            "store_nbr": [1, 1, 1, 1, 1, 1, 2, 2, 2],
+            "family": [
+                "GROCERY I", "GROCERY I", "GROCERY I",
+                "BEVERAGES", "BEVERAGES", "BEVERAGES",
+                "GROCERY I", "GROCERY I", "GROCERY I",
+            ],
+            "sales": [10, 20, 30, 40, 50, 60, 100, 200, 300],
+        }
+    )
+
+    out = get_store_family_series(df, store_nbr=1, family="GROCERY I")
+
+    # 条件に合うのは store_nbr=1 & family=GROCERY I の3行だけ
+    assert len(out) == 3
+    assert out["store_nbr"].nunique() == 1
+    assert out["family"].nunique() == 1
+    assert out["store_nbr"].iloc[0] == 1
+    assert out["family"].iloc[0] == "GROCERY I"
+
+    # 日付が昇順に並んでいること（もともとシャッフルしておいた）
+    assert list(out["date"]) == [
+        pd.Timestamp("2020-01-01"),
+        pd.Timestamp("2020-01-02"),
+        pd.Timestamp("2020-01-03"),
+    ]
+
+def test_naive_1d_prediction_on_simple_series() -> None:
+    # 7日分のシンプルな系列
+    df = pd.DataFrame(
+        {
+            "date": pd.date_range("2020-01-01", periods=7),
+            "sales": [10, 20, 30, 40, 50, 60, 70],
+        }
+    )
+
+    # Naive 1日前予測
+    df["pred_naive_1d"] = df["sales"].shift(1)
+
+    # 予測が「1日前の値」になっているかを確認
+    expected = [np.nan, 10, 20, 30, 40, 50, 60]
+    # NaN 比較のために isna / == で分けてチェック
+    assert np.isnan(df["pred_naive_1d"].iloc[0])
+    assert list(df["pred_naive_1d"].iloc[1:]) == expected[1:]
+
+
+def test_ma7_prediction_on_simple_series() -> None:
+    df = pd.DataFrame(
+        {
+            "date": pd.date_range("2020-01-01", periods=7),
+            "sales": [10, 20, 30, 40, 50, 60, 70],
+        }
+    )
+
+    # 7日移動平均（Notebook と同じ rolling(7).mean()）
+    df["pred_ma_7d"] = df["sales"].rolling(7).mean()
+
+    # 最初の6行は NaN、7行目は全体の平均 40 になるはず
+    assert df["pred_ma_7d"].iloc[:6].isna().all()
+    assert df["pred_ma_7d"].iloc[6] == 40

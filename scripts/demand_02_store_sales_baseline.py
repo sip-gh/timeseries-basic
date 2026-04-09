@@ -28,11 +28,11 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from src.metrics import rmse, smape
+from src.features import add_lag_ma_features, get_store_family_series
 
 
 
 # %%
-
 # 代表系列の条件
 target_store = 1
 target_family = "GROCERY I"
@@ -42,12 +42,14 @@ train_path = "../data/store-sales-time-series-forecasting/train.csv"
 df = pd.read_csv(train_path, parse_dates=["date"])
 
 # 代表系列だけ抽出（EDAと同じ条件）
-df_rep = df[(df["store_nbr"] == target_store) & (df["family"] == target_family)].copy()
-
-# 日付順にソートしておく（時系列なので必須）
-df_rep = df_rep.sort_values("date").reset_index(drop=True)
+df_rep = get_store_family_series(df=df, store_nbr=target_store, family=target_family)
 
 df_rep.head()
+
+
+# %%
+df_feat = add_lag_ma_features(df_rep, target_col="sales")
+df_feat[["date", "sales", "lag_1", "ma_7", "ret_1", "dist_ma_7", "vol_7"]].head(10)
 
 
 # %%

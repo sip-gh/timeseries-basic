@@ -1,7 +1,7 @@
 # src/features.py
-from typing import Sequence
 import numpy as np
 import pandas as pd
+from typing import Sequence
 
 
 def add_lag_ma_features(
@@ -151,3 +151,16 @@ def get_store_sales_feature_cols() -> list[str]:
         "rolling_mean_14",
         "rolling_mean_28",
     ]
+
+
+def get_store_family_series(
+    df: pd.DataFrame,
+    store_nbr: int,
+    family: str,
+) -> pd.DataFrame:
+    """
+    指定した店舗×ファミリーの単一系列を、日付順にソートして返す。
+    """
+    out = df[(df["store_nbr"] == store_nbr) & (df["family"] == family)].copy()
+    out = out.sort_values("date").reset_index(drop=True)
+    return out
