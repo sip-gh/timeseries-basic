@@ -31,40 +31,22 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 
+from src.features import (
+    add_store_sales_calendar_features,
+    add_store_sales_group_lag_ma_features,
+    get_store_sales_feature_cols,
+)
 from src.time_series_cv import make_yearly_expanding_splits
 
 
 
 # %%
-# データ読み込み
+# 学習用データを読み込み、日付からカレンダー特徴量を追加
 train_path = "../data/store-sales-time-series-forecasting/train.csv"
 df = pd.read_csv(train_path, parse_dates=["date"])
 
-# カレンダー特徴量の追加
-df["year"] = df["date"].dt.year          # 年
-df["month"] = df["date"].dt.month        # 月 (1-12)
-df["day"] = df["date"].dt.day            # 日 (1-31)
-
-df["dow"] = df["date"].dt.dayofweek      # 曜日 (0=月, 6=日)
-df["weekofyear"] = df["date"].dt.isocalendar().week.astype(int)  # 何週目か[web:205]
-
-# 週末フラグ (土日)
-df["is_weekend"] = df["dow"].isin([5, 6]).astype(int)
-
-# 月初・月末フラグ
-df["is_month_start"] = df["date"].dt.is_month_start.astype(int)
-df["is_month_end"] = df["date"].dt.is_month_end.astype(int)
-
-# 四半期末・年末フラグ
-df["is_quarter_end"] = df["date"].dt.is_quarter_end.astype(int)
-df["is_year_end"] = df["date"].dt.is_year_end.astype(int)
-
-# 追加できたか軽く確認
-df[[
-    "date", "year", "month", "day", "dow", "weekofyear",
-    "is_weekend", "is_month_start", "is_month_end",
-    "is_quarter_end", "is_year_end"
-]].head()
+df = add_store_sales_calendar_features(df)
+df.head()
 
 
 # %%
@@ -89,52 +71,25 @@ df_feat.head()
 # %%
 target_col = "sales"
 
-# 1. 時系列順にソートしておく
-#    → グループごとのshift / rollingが「過去→未来」順になるようにするため
-df_feat = df_feat.sort_values([
-    "store_nbr",
-    "family",
-    "date",
-])
-
-# 2. 多系列の「グループキー」を定義
+# 店舗×ファミリーごとにラグ・移動平均特徴量を追加
 group_cols = ["store_nbr", "family"]
-
-# 3. ラグ特徴量（過去1日, 7日, 14日の売上）
-for lag in [1, 7, 14]:
-    df_feat[f"lag_{lag}"] = (
-        df_feat
-        .groupby(group_cols)[target_col]  # 店舗×ファミリーごとにsalesをグループ化
-        .shift(lag)                       # 各グループ内でlag日前の値にずらす
-    )
-
-# 4. 移動平均特徴量（過去7, 14, 28日の平均売上）
-for window in [7, 14, 28]:
-    df_feat[f"rolling_mean_{window}"] = (
-        df_feat
-        .groupby(group_cols)[target_col]  # 店舗×ファミリーごとにsalesをグループ化
-        .shift(1)                         # 当日を含めないよう、まず1日分だけ過去にずらす
-        .rolling(window)                  # 各グループ内で直近window行の窓を取る
-        .mean()                           # その平均を計算
-    )
-
-# 5. ラグ・移動平均が計算できない先頭部分（NaN行）を削除
-df_feat = df_feat.dropna().reset_index(drop=True)
+df_feat = add_store_sales_group_lag_ma_features(
+    df_feat,
+    group_cols=group_cols,
+    target_col=target_col,
+    lags=(1, 7, 14),
+    windows=(7, 14, 28),
+    drop_na=True,
+)
 
 df_feat.head()
 
 
 
 # %%
-# 学習に使う特徴量（あとで増減しやすいようにリストにまとめる）
-feature_cols = [
-    "onpromotion",
-    "year", "month", "day", "dow", "weekofyear",
-    "is_weekend", "is_month_start", "is_month_end",
-    "is_quarter_end", "is_year_end",
-    "lag_1", "lag_7", "lag_14",
-    "rolling_mean_7", "rolling_mean_14", "rolling_mean_28",
-]
+
+# 学習に使う特徴量（あとで増減しやすいように関数で一元管理）
+feature_cols = get_store_sales_feature_cols()
 
 X = df_feat[feature_cols].copy()
 y = df_feat["sales"].values
@@ -315,14 +270,14 @@ rmse_path
 # | fold | model                | RMSE  |
 # |------|----------------------|-------|
 # | 1    | Linear Regression    | 278.6 |
-# |      | LightGBM (best)      | 204.0 |
+# |      | LightGBM (best)      | 230.9 |
 # | 2    | Linear Regression    | 424.1 |
-# |      | LightGBM (best)      | 370.2 |
+# |      | LightGBM (best)      | 377.9 |
 # | 3    | Linear Regression    | 341.7 |
-# |      | LightGBM (best)      | 219.5 |
+# |      | LightGBM (best)      | 297.7 |
 #
-# LightGBM は、カレンダー特徴量と売上のラグ・移動平均のみで、線形回帰に対して各foldで RMSE を約50〜120程度改善しました。  
-# また `n_estimators=200, num_leaves=31` のベース設定から、木の本数や葉の数を増やしたバージョン（500本や num_leaves=63）も検証しましたが、本タスクではいずれも汎化性能が悪化したため、よりシンプルなパラメータ設定を最終モデルとしています。
+# LightGBM は、カレンダー特徴量と売上のラグ・移動平均のみで、線形回帰に対して各foldで RMSE をおおよそ 45 前後改善しました。  
+# また `n_estimators=200, num_leaves=31` のベース設定から、木の本数や葉の数を増やしたバージョン（500本や num_leaves=63）も検証しましたが、本タスクではいずれも汎化性能が大きく改善することはなく、よりシンプルなパラメータ設定を最終モデルとしています。
 
 # %% [markdown]
 # ### 使用した特徴量
