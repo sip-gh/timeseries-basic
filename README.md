@@ -119,6 +119,8 @@ The training data (2013-01-29–2017-08-15) is split into three folds using a ye
 
 This setup always trains on past data and evaluates on future periods, closely matching a realistic deployment scenario for sales forecasting.
 
+Additionally, we computed a SHAP value–based feature importance bar plot once to cross-check the LightGBM gain-based importance.
+
 ---
 
 # Python時系列分析の基本
@@ -240,3 +242,5 @@ LightGBM の Feature Importance（gain）からは、`rolling_mean_7` と `lag_1
   - test : 2017-01-01 〜 2017-08-15
 
 この設定により、常に「過去データで学習し、翌年以降のデータで評価する」形になっており、売上予測の実運用に近い条件で汎化性能を評価できています。
+
+また、LightGBM の gain ベースの特徴量重要度を補足的に確認するため、SHAP 値に基づく特徴量重要度の棒グラフも 1 回だけ作成しました。

@@ -22,6 +22,7 @@ import mlflow
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+import shap
 from sklearn.linear_model import LinearRegression
 from sklearn.metrics import mean_squared_error
 
@@ -402,6 +403,37 @@ with mlflow.start_run(run_name="lgbm_v1_feature_importance"):
     # 保存したPNGファイルを artifact としてアップロード
     # MLflow UI の「Artifacts > figures」配下から確認できる
     mlflow.log_artifact(fig_path, artifact_path="figures")
+
+
+# %%
+# .ipynb で、SHAPが使うmatplotlib設定を整える
+shap.initjs()
+
+# LightGBM v1 で全期間学習したモデルを使って、
+# 「このモデルがどういう特徴量寄与で予測しているか」を説明する
+# （model_lgbm ではなく、上でfitした lgb_model_v1 を渡す）
+explainer = shap.TreeExplainer(lgb_model_v1)
+
+# 計算コストを抑えるため、代表サンプルだけに絞る
+# ここでは例として、先頭から 5,000 行を使う
+X_valid = X.head(5000)
+
+# 各サンプル × 各特徴量の SHAP値を計算
+# （回帰の場合、形状は (n_samples, n_features)）
+shap_values = explainer.shap_values(X_valid)
+
+# ここで自前のFigure/Axesを明示的に作る
+fig, ax = plt.subplots(figsize=(6, 6))
+
+# SHAPのbar図を、このaxes上に描画（show=Falseで「表示しないだけ」）
+shap.summary_plot(
+    shap_values,
+    X_valid,
+    plot_type="bar",
+    show=False
+)
+
+plt.tight_layout()
 
 
 # %% [markdown]
