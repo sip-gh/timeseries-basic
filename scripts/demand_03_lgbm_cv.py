@@ -9,27 +9,29 @@
 #   kernelspec:
 #     display_name: timeseries-basic
 #     language: python
-#     name: timeseries-basic
+#     name: python3
 # ---
 
 # %%
 import sys
 from pathlib import Path
-
 from typing import Iterable, Tuple
+
+import lightgbm as lgb
+import mlflow
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 from sklearn.linear_model import LinearRegression
 from sklearn.metrics import mean_squared_error
-import lightgbm as lgb
 
 # notebooks_local/ から 1つ上（プロジェクトルート）を取得
 PROJECT_ROOT = Path.cwd().parent
 
-# Python がモジュールを探すパスにプロジェクトルートを追加
+# プロジェクトルートを Python のモジュール探索パスに追加
+# （src.* を import できるようにするため）
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
-
 
 from src.features import (
     add_store_sales_calendar_features,
@@ -37,6 +39,15 @@ from src.features import (
     get_store_sales_feature_cols,
 )
 from src.time_series_cv import make_yearly_expanding_splits
+
+# MLflow: プロジェクト直下の mlruns/ を tracking 用ディレクトリに指定
+# 例: file:///Users/xxx/devs/timeseries-basic/mlruns
+MLFLOW_TRACKING_URI = f"file://{PROJECT_ROOT / 'mlruns'}"
+mlflow.set_tracking_uri(MLFLOW_TRACKING_URI)
+
+# このノート／スクリプト用の実験名を設定
+# MLflow UI では "demand_lgbm_cv" という Experiment として表示される
+mlflow.set_experiment("demand_lgbm_cv")
 
 
 
@@ -100,6 +111,7 @@ dates = df_feat["date"].values  # 分割確認用に日付も持っておく
 # %%
 # 年ベースのCV split（最後の3年をテストに使う）
 splits = make_yearly_expanding_splits(df_feat["year"], n_folds=3)
+splits_list = list(splits)
 
 
 
@@ -188,69 +200,130 @@ def run_lgbm_cv(
 
 
 # %%
+def run_naive_lag1_cv(
+    splits: Iterable[Tuple[np.ndarray, np.ndarray]],
+    X: pd.DataFrame,
+    y: np.ndarray,
+) -> pd.DataFrame:
+    """
+    lag_1 をそのまま予測として使う Naive ベースラインのCV。
+    """
+    results = []
+
+    for i, (train_mask, test_mask) in enumerate(splits, start=1):
+        # test 期間の特徴量と目的変数
+        X_test = X.loc[test_mask]
+        y_test = y[test_mask]
+
+        # 1日前の売上（特徴量 lag_1）をそのまま予測に使う
+        y_pred = X_test["lag_1"].values
+
+        # RMSE 計算
+        mse = mean_squared_error(y_test, y_pred)
+        rmse = float(np.sqrt(mse))
+        print(f"[Naive lag1] Fold {i} RMSE: {rmse:.4f}")
+        results.append({"fold": i, "rmse": rmse})
+
+    return pd.DataFrame(results)
+
+
+
+# %%
+# Naive (lag_1) ベースラインを MLflow に1本記録
+with mlflow.start_run(run_name="naive_lag1_cv"):
+    # パラメータ（ほぼ説明用）
+    mlflow.log_param("model_type", "naive_lag1")
+    mlflow.log_param("note", "use lag_1 as prediction")
+
+    df_naive_cv = run_naive_lag1_cv(splits_list, X, y)
+
+    mean_rmse_naive = df_naive_cv["rmse"].mean()
+    mlflow.log_metric("rmse_mean", mean_rmse_naive)
+
+    # rmse_df 用に列名を合わせておく
+    df_naive_cv = df_naive_cv.rename(columns={"rmse": "rmse_naive_lag1"})
+
+
+# %%
+mlflow.set_experiment("demand_lgbm_cv")
+
+# 3パターンの LightGBM 設定
 # v1: ベースラインとなるLightGBMパラメータでCV
-# とりあえずのパラメータ（十分シンプル）
-lgb_params = {
-    "objective": "regression",
-    "metric": "rmse",       # lgb内部用の指標
-    "random_state": 42,
-    "n_estimators": 200,
-    "learning_rate": 0.1,
-    "num_leaves": 31,
-    "n_jobs": -1,
-}
-lgb_df = (
-    run_lgbm_cv(lgb_params, splits, X, y)
-    .rename(columns={"rmse": "rmse_lgbm"})
-)
+lgb_params_sets = [
+    ("lgbm_v1_base", {
+        "objective": "regression",
+        "metric": "rmse",       # lgb内部用の指標
+        "random_state": 42,
+        "n_estimators": 200,
+        "learning_rate": 0.1,
+        "num_leaves": 31,
+        "n_jobs": -1,
+    }),
+    # v2: n_estimators（木の本数）だけ増やしたバージョンでCV
+    ("lgbm_v2_more_trees", {
+        "objective": "regression",
+        "metric": "rmse",
+        "random_state": 42,
+        "n_estimators": 500,   # ← 200 → 500 に増やす
+        "learning_rate": 0.1,
+        "num_leaves": 31,
+        "n_jobs": -1,
+    }),
+    # v3: num_leaves（葉の数）だけ増やしたバージョンでCV
+    ("lgbm_v3_more_leaves", {
+        "objective": "regression",
+        "metric": "rmse",
+        "random_state": 42,
+        "n_estimators": 200,   # 本数はベースラインと同じ
+        "learning_rate": 0.1,
+        "num_leaves": 63,      # ← 31 → 63 に増やす
+        "n_jobs": -1,
+    }),
+]
 
-# v2: n_estimators（木の本数）だけ増やしたバージョンでCV
-lgb_params_v2 = {
-    "objective": "regression",
-    "metric": "rmse",
-    "random_state": 42,
-    "n_estimators": 500,   # ← 200 → 500 に増やす
-    "learning_rate": 0.1,
-    "num_leaves": 31,
-    "n_jobs": -1,
-}
-lgb_df_v2 = (
-    run_lgbm_cv(lgb_params_v2, splits, X, y)
-    .rename(columns={"rmse": "rmse_lgbm_v2"})
-)
+lgb_results = []
+# ---- ここから MLflow で1 run として記録 ----
+for run_name, params in lgb_params_sets:
+    with mlflow.start_run(run_name=run_name):
+        # パラメータをログ
+        mlflow.log_params(params)
 
-# v3: num_leaves（葉の数）だけ増やしたバージョンでCV
-lgb_params_v3 = {
-    "objective": "regression",
-    "metric": "rmse",
-    "random_state": 42,
-    "n_estimators": 200,   # 本数はベースラインと同じ
-    "learning_rate": 0.1,
-    "num_leaves": 63,      # ← 31 → 63 に増やす
-    "n_jobs": -1,
-}
-lgb_df_v3 = (
-    run_lgbm_cv(lgb_params_v3, splits, X, y)
-    .rename(columns={"rmse": "rmse_lgbm_v3"})
-)
+        # CV 実行
+        df_cv = run_lgbm_cv(params, splits_list, X, y)
+
+        # fold 平均 RMSE を算出してログ
+        mean_rmse = df_cv["rmse"].mean()
+        mlflow.log_metric("rmse_mean", mean_rmse)
+
+        # 後で結合するため列名を run ごとに変える
+        df_cv = df_cv.rename(columns={"rmse": f"rmse_{run_name}"})
+        lgb_results.append(df_cv)
+
+
+
+# %%
+# v1/v2/v3 の RMSE を fold ごとに横持ち結合
+lgb_df_all = lgb_results[0].copy()
+for df_cv in lgb_results[1:]:
+    lgb_df_all = lgb_df_all.merge(df_cv, on="fold")
+
+# Naive の RMSE を結合
+lgb_df_all = lgb_df_all.merge(df_naive_cv, on="fold")
 
 # 線形回帰の結果をDataFrameに（列名を rmse_linear に統一）
 lr_df = pd.DataFrame(fold_results).rename(columns={"rmse": "rmse_linear"})
 
 # 各モデルのRMSEをfold単位で横持ちに結合
-rmse_df = (
-    lr_df
-    .merge(lgb_df,    on="fold")
-    .merge(lgb_df_v2, on="fold")
-    .merge(lgb_df_v3, on="fold")
-)
+rmse_df = lr_df.merge(lgb_df_all, on="fold")
 
-# 線形回帰との差分（どれだけLGBMが改善したか）を追加
-rmse_df["rmse_diff"] = rmse_df["rmse_linear"] - rmse_df["rmse_lgbm"]
+# ベースライン（v1）との差分
+rmse_df["rmse_diff"] = rmse_df["rmse_linear"] - rmse_df["rmse_lgbm_v1_base"]
 
 rmse_df
 
 
+# %% [markdown]
+#
 
 # %%
 rmse_df.describe()
@@ -262,80 +335,74 @@ rmse_df.to_csv(rmse_path, index=False)
 rmse_path
 
 
-# %% [markdown]
-# ### モデル比較と時系列CVの設定
-#
-# 2013–2017年の学習データを用いて、「過去の全期間で学習し、次の1年をテストする」年ベースの3foldクロスバリデーションを行いました。各foldのテスト期間はそれぞれ 2015年, 2016年, 2017年 です。
-#
-# | fold | model                | RMSE  |
-# |------|----------------------|-------|
-# | 1    | Linear Regression    | 278.6 |
-# |      | LightGBM (best)      | 230.9 |
-# | 2    | Linear Regression    | 424.1 |
-# |      | LightGBM (best)      | 377.9 |
-# | 3    | Linear Regression    | 341.7 |
-# |      | LightGBM (best)      | 297.7 |
-#
-# LightGBM は、カレンダー特徴量と売上のラグ・移動平均のみで、線形回帰に対して各foldで RMSE をおおよそ 44〜48 程度改善しました。  
-# また `n_estimators=200, num_leaves=31` のベース設定から、木の本数や葉の数を増やしたバージョン（500本や `num_leaves=63`）も検証しましたが、本タスクではいずれも汎化性能が大きく改善することはなく、よりシンプルなパラメータ設定を最終モデルとしています。
+# %%
+# README 用のモデル別 RMSE 平均サマリ
+rmse_summary = pd.DataFrame({
+    "model": [
+        "naive_lag1",
+        "linear",
+        "lgbm_v1_base",
+    ],
+    "rmse_mean": [
+        rmse_df["rmse_naive_lag1"].mean(),
+        rmse_df["rmse_linear"].mean(),
+        rmse_df["rmse_lgbm_v1_base"].mean(),
+    ],
+})
+
+rmse_summary
+
+
+# %%
+# 全期間を使って LGBM v1 で学習（FI/SHAP 用）
+lgb_params_v1 = {
+    "objective": "regression",
+    "metric": "rmse",
+    "random_state": 42,
+    "n_estimators": 200,
+    "learning_rate": 0.1,
+    "num_leaves": 31,
+    "n_jobs": -1,
+}
+
+lgb_model_v1 = lgb.LGBMRegressor(**lgb_params_v1)
+lgb_model_v1.fit(X, y)
+
+
+# %%
+plt.figure(figsize=(8, 6))
+
+# LightGBM の特徴量重要度を可視化
+ax = lgb.plot_importance(
+    lgb_model_v1,
+    importance_type="gain",   # 各特徴量が「損失改善」にどれだけ貢献したか
+    max_num_features=20,      # 上位20特徴量だけ表示
+)
+
+# タイトルなどレイアウト調整
+plt.title("LightGBM Feature Importance (gain)")
+plt.tight_layout()
+
+# PNGとして保存（README・MLflow用）
+fig_path = "../data/feature_importance_lgbm_v1.png"
+plt.savefig(fig_path, dpi=150)
+
+# Notebook上にも表示
+plt.show()
+
+# 保存パスを確認用に返す
+fig_path
+
+
+# %%
+# Feature Importance 図を MLflow に保存する run
+with mlflow.start_run(run_name="lgbm_v1_feature_importance"):
+    # 図を作成するのに使ったモデルのハイパーパラメータを記録
+    mlflow.log_params(lgb_params_v1)
+    # 保存したPNGファイルを artifact としてアップロード
+    # MLflow UI の「Artifacts > figures」配下から確認できる
+    mlflow.log_artifact(fig_path, artifact_path="figures")
+
 
 # %% [markdown]
-# ### 使用した特徴量
 #
-# 本モデルでは、Kaggle Store Salesデータのうち、以下の特徴量を用いています。
-#
-# - 基本特徴量  
-#   - `store_nbr` : 店舗ID  
-#   - `family` : 商品ファミリー  
-#   - `onpromotion` : プロモーション中商品数
-#
-# - カレンダー特徴量  
-#   - `year` : 年（2013〜2017）  
-#   - `month` : 月（1〜12）  
-#   - `day` : 日（1〜31）  
-#   - `dow` : 曜日（0=月曜, …, 6=日曜）  
-#   - `weekofyear` : 年内の週番号  
-#   - `is_weekend` : 週末フラグ（土日=1, それ以外=0）  
-#   - `is_month_start` : 月初フラグ  
-#   - `is_month_end` : 月末フラグ  
-#   - `is_quarter_end` : 四半期末フラグ  
-#   - `is_year_end` : 年末フラグ
-#
-# - 時系列ラグ特徴量（店舗×ファミリーごとに算出）  
-#   - `lag_1` : 1日前の売上  
-#   - `lag_7` : 7日前の売上  
-#   - `lag_14` : 14日前の売上
-#
-# - 時系列移動平均特徴量（店舗×ファミリーごとに算出）  
-#   - `rolling_mean_7` : 過去7日間の平均売上（当日を除く）  
-#   - `rolling_mean_14` : 過去14日間の平均売上（当日を除く）  
-#   - `rolling_mean_28` : 過去28日間の平均売上（当日を除く）
-
-# %% [markdown]
-# ### LightGBM と時系列クロスバリデーション
-#
-# 本プロジェクトでは、まず `demand_02_baseline.ipynb` で代表系列（Store 1, GROCERY I）を対象に、Naive法（1日前の売上）と7日移動平均によるシンプルなベースラインモデルを構築し、RMSE/SMAPEで精度感を把握しました。そのうえで `demand_03_lgbm_cv.ipynb` では、全店舗・全ファミリーに拡張し、カレンダー特徴量と売上のラグ・移動平均を入力とした LightGBM 回帰モデルを作成し、年ごとのexpanding window 3foldクロスバリデーションで汎化性能を評価しています。
-#
-# ### 時系列クロスバリデーションの設定
-#
-# 学習データ（2013-01-29〜2017-08-15）は、将来情報を使わないように「年ごとのexpanding window」で3分割しました。
-#
-# - Fold 1  
-#   - train: 2013-01-29 〜 2014-12-31  
-#   - test : 2015-01-01 〜 2015-12-31
-#
-# - Fold 2  
-#   - train: 2013-01-29 〜 2015-12-31  
-#   - test : 2016-01-01 〜 2016-12-31
-#
-# - Fold 3  
-#   - train: 2013-01-29 〜 2016-12-31  
-#   - test : 2017-01-01 〜 2017-08-15
-#
-# テキストイメージ：
-#
-# - Fold1: **[train] 2013–2014** → **[test] 2015**  
-# - Fold2: **[train] 2013–2015** → **[test] 2016**  
-# - Fold3: **[train] 2013–2016** → **[test] 2017(〜8/15)**
-#
-# この設定により、常に「過去データで学習し、翌年以降のデータで評価する」形になっており、売上予測の実運用に近い条件で汎化性能を評価しています。
